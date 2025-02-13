@@ -45,8 +45,6 @@ class TimerManager:
                 elif play_mode == "文字":
                     if text_for_tts.strip():
                         speak_text(text_for_tts)
-                else:
-                    print("沒有指定有效的播放模式 (audio/text)")
 
                 # 如果不是無限循環，播放完就結束
                 if not infinite_loop:
@@ -54,7 +52,6 @@ class TimerManager:
 
             # 離開前，顯示 0 或清空
             on_update_label(0)
-            print(f"Item {item_id} 計時結束")
 
         t = threading.Thread(target=timer_thread, daemon=True)
         self.timers[item_id]["thread"] = t
