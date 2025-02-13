@@ -64,7 +64,7 @@ class TimerApp:
 
         # 無限循環: 是/否
         infinite_loop = item.get('infinite_loop', False)
-        loop_text = "單次" if infinite_loop else "循環"
+        loop_text = "循環" if infinite_loop else "單次"
         label_loop = tk.Label(frame, text=loop_text)
         label_loop.pack(side=tk.LEFT, padx=5)
 
