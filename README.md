@@ -12,3 +12,7 @@ design for multiple timer, support sound and voice notice
 - fix edit text trigger cancel listbox selection
 
 - adjust show item format
+
+- hide click 儲存並更新 message box
+
+- 

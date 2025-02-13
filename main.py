@@ -160,13 +160,18 @@ class TimerApp:
         self.label_tts.grid(row=2, column=0, sticky=tk.W, pady=2)
         self.entry_tts.grid(row=2, column=1, columnspan=2, sticky=tk.W)
 
-        # 5) 倒數時間 (分、秒)
-        tk.Label(self.settings_right_frame, text="倒數-分:").grid(row=3, column=0, sticky=tk.W, pady=2)
-        self.entry_minute = tk.Entry(self.settings_right_frame, width=5)
-        self.entry_minute.grid(row=3, column=1, sticky=tk.W)
-        tk.Label(self.settings_right_frame, text="秒:").grid(row=3, column=2, sticky=tk.W)
-        self.entry_second = tk.Entry(self.settings_right_frame, width=5)
-        self.entry_second.grid(row=3, column=3, sticky=tk.W)
+        # 先在 self.settings_right_frame 裡創一個 frame_time
+        frame_time = tk.Frame(self.settings_right_frame)
+        frame_time.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=2)
+
+        # 在 frame_time 中擺放「倒數-分」、「分輸入框」、「秒:」、「秒輸入框」
+        tk.Label(frame_time, text="倒數    分:").pack(side=tk.LEFT)
+        self.entry_minute = tk.Entry(frame_time, width=5)
+        self.entry_minute.pack(side=tk.LEFT, padx=(0, 5))  # 稍微加點間距
+
+        tk.Label(frame_time, text="秒:").pack(side=tk.LEFT)
+        self.entry_second = tk.Entry(frame_time, width=5)
+        self.entry_second.pack(side=tk.LEFT)
 
         # 6) 無限循環
         self.infinite_loop_var = tk.BooleanVar()
@@ -336,7 +341,7 @@ class TimerApp:
         self.listbox.select_set(index)
         self.show_item_detail(index)
         save_config(self.items)
-        messagebox.showinfo("更新", f"第 {index+1} 個項目已更新並保存")
+        # messagebox.showinfo("更新", f"第 {index+1} 個項目已更新並保存")
 
     def clear_detail(self):
         self.entry_item_name.delete(0, tk.END)
@@ -352,7 +357,7 @@ class TimerApp:
         self.update_item()
         save_config(self.items)
         self.refresh_items_ui()
-        messagebox.showinfo("成功", "設定已更新")
+        # messagebox.showinfo("成功", "設定已更新")
 
 def bind_ctrl_a_to_entry(entry_widget):
     def select_all(event):

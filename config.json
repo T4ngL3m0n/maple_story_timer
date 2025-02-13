@@ -1,42 +1,42 @@
 [
-  {
-    "text": "新的項目",
-    "play_mode": "文字",
-    "tts_text": "",
-    "audio_path": "",
-    "countdown": 30,
-    "infinite_loop": false
-  },
-  {
-    "text": "新的項目",
-    "play_mode": "文字",
-    "tts_text": "",
-    "audio_path": "",
-    "countdown": 30,
-    "infinite_loop": false
-  },
-  {
-    "text": "新的項目",
-    "play_mode": "文字",
-    "tts_text": "",
-    "audio_path": "",
-    "countdown": 30,
-    "infinite_loop": false
-  },
-  {
-    "text": "新的項目",
-    "play_mode": "文字",
-    "tts_text": "",
-    "audio_path": "",
-    "countdown": 30,
-    "infinite_loop": false
-  },
-  {
-    "text": "新的項目",
-    "play_mode": "文字",
-    "tts_text": "",
-    "audio_path": "",
-    "countdown": 30,
-    "infinite_loop": false
-  }
+    {
+        "text": "新的項目",
+        "play_mode": "文字",
+        "tts_text": "",
+        "audio_path": "",
+        "countdown": 30,
+        "infinite_loop": false
+    },
+    {
+        "text": "新的項目",
+        "play_mode": "文字",
+        "tts_text": "",
+        "audio_path": "",
+        "countdown": 30,
+        "infinite_loop": false
+    },
+    {
+        "text": "新的項目",
+        "play_mode": "文字",
+        "tts_text": "",
+        "audio_path": "",
+        "countdown": 30,
+        "infinite_loop": false
+    },
+    {
+        "text": "新的項目",
+        "play_mode": "文字",
+        "tts_text": "",
+        "audio_path": "",
+        "countdown": 30,
+        "infinite_loop": false
+    },
+    {
+        "text": "新的項目",
+        "play_mode": "文字",
+        "tts_text": "",
+        "audio_path": "",
+        "countdown": 30,
+        "infinite_loop": false
+    }
 ]
