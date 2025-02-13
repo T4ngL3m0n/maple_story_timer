@@ -1,42 +1,42 @@
 [
     {
-        "text": "新的項目",
+        "text": "噴泉",
         "play_mode": "文字",
-        "tts_text": "",
+        "tts_text": "噴泉",
         "audio_path": "",
-        "countdown": 30,
+        "countdown": 60,
         "infinite_loop": false
     },
     {
-        "text": "新的項目",
+        "text": "雅努斯",
         "play_mode": "文字",
-        "tts_text": "",
+        "tts_text": "雅努斯",
         "audio_path": "",
-        "countdown": 30,
+        "countdown": 115,
         "infinite_loop": false
     },
     {
-        "text": "新的項目",
+        "text": "紅包",
         "play_mode": "文字",
-        "tts_text": "",
+        "tts_text": "紅包",
         "audio_path": "",
-        "countdown": 30,
+        "countdown": 900,
         "infinite_loop": false
     },
     {
-        "text": "新的項目",
+        "text": "戰地掉寶",
         "play_mode": "文字",
-        "tts_text": "",
+        "tts_text": "戰地掉寶",
         "audio_path": "",
-        "countdown": 30,
+        "countdown": 1200,
         "infinite_loop": false
     },
     {
-        "text": "新的項目",
+        "text": "加倍",
         "play_mode": "文字",
-        "tts_text": "",
+        "tts_text": "加倍",
         "audio_path": "",
-        "countdown": 30,
+        "countdown": 1800,
         "infinite_loop": false
     }
 ]
