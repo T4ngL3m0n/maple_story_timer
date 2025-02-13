@@ -2,4 +2,4 @@ __pycache__/
 build/
 dist/
 MS_TimerApp.spec
-pyinstaller.bat
+pyinstaller.txt
