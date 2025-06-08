@@ -4,12 +4,12 @@ import os
 import shutil
 from data_manager import load_config, save_config
 from timer_manager import TimerManager
+import pygame
 
 class TimerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("倒數計時器 - build by DC: l3m0nt4ng")
-
+        self.root.title("倒數計時器 - build by DC: l3m0nt4ng v0.1")
         self.items = load_config()
         self.timer_manager = TimerManager()
         self.current_selected_index = None
@@ -26,6 +26,7 @@ class TimerApp:
 
         self.setup_timer_tab()
         self.setup_settings_tab()
+        pygame.mixer.init()
 
     # ----------------- 計時管理分頁 -----------------
     def setup_timer_tab(self):
@@ -87,7 +88,7 @@ class TimerApp:
         audio_path = item.get("audio_path", "")
         play_mode = item.get("play_mode", "文字")
         tts_text = item.get("tts_text", "")
-
+        volume = float(item.get("volume", 50)) / 100.0
         # 取得「目前剩餘時間 / 總時間」的 Label
         label_current_and_total = self.item_rows[item_id][1]
         total_str = self.format_time(countdown)
@@ -104,6 +105,7 @@ class TimerApp:
             audio_path=audio_path,
             text_for_tts=tts_text,
             play_mode=play_mode,
+            volume=volume,
             on_update_label=update_label
         )
 
@@ -173,6 +175,10 @@ class TimerApp:
         self.entry_second = tk.Entry(frame_time, width=5)
         self.entry_second.pack(side=tk.LEFT)
 
+        tk.Label(frame_time, text="音量:").pack(side=tk.LEFT, padx=(10, 5))
+        self.entry_volume = tk.Entry(frame_time, width=5)
+        self.entry_volume.pack(side=tk.LEFT)
+
         # 6) 無限循環
         self.infinite_loop_var = tk.BooleanVar()
         self.chk_infinite = tk.Checkbutton(self.settings_right_frame, text="無限循環", variable=self.infinite_loop_var)
@@ -230,6 +236,9 @@ class TimerApp:
             self.entry_second.insert(0, str(seconds))
 
             self.infinite_loop_var.set(item.get('infinite_loop', False))
+
+            self.entry_volume.delete(0, tk.END)
+            self.entry_volume.insert(0, item.get('volume', 0))
 
     def update_mode_ui(self, event=None):
         current_mode = self.play_mode_var.get()
@@ -311,6 +320,7 @@ class TimerApp:
         item = self.items[index]
         item['text'] = self.entry_item_name.get()
         item['play_mode'] = self.play_mode_var.get()
+        item['volume'] = self.entry_volume.get().strip() or '70'
         if item['play_mode'] == "文字":
             item['tts_text'] = self.entry_tts.get()
             item['audio_path'] = ""
@@ -349,6 +359,7 @@ class TimerApp:
         self.entry_audio.delete(0, tk.END)
         self.entry_minute.delete(0, tk.END)
         self.entry_second.delete(0, tk.END)
+        self.entry_volume.delete(0, tk.END)
         self.infinite_loop_var.set(False)
         self.play_mode_var.set("文字")
         self.update_mode_ui()

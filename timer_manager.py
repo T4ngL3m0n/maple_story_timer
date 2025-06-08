@@ -8,7 +8,15 @@ class TimerManager:
         # timers 字典: key = item_id, value = { "thread": 執行緒, "stop_flag": threading.Event() }
         self.timers = {}
 
-    def start_item(self, item_id, countdown, infinite_loop, audio_path, text_for_tts, play_mode, on_update_label):
+    def start_item(self,
+                   item_id,
+                   countdown,
+                   infinite_loop,
+                   audio_path,
+                   text_for_tts,
+                   play_mode,
+                   volume,
+                   on_update_label):
         """
         新增參數:
           - text_for_tts: 要 TTS 的文字
@@ -41,10 +49,10 @@ class TimerManager:
                 # 倒數結束，依 play_mode 決定要播放音檔或TTS
                 if play_mode == "音檔":
                     if audio_path:
-                        play_audio(audio_path)
+                        play_audio(audio_path, volume)
                 elif play_mode == "文字":
                     if text_for_tts.strip():
-                        speak_text(text_for_tts)
+                        speak_text(text_for_tts, volume)
 
                 # 如果不是無限循環，播放完就結束
                 if not infinite_loop:

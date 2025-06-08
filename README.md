@@ -15,4 +15,9 @@ design for multiple timer, support sound and voice notice
 
 - hide click 儲存並更新 message box
 
-- 
+## v0.2
+
+- adjust async play notice, prevent from audio block
+
+- adjust default volumn 70
+
