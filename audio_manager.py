@@ -1,9 +1,9 @@
 # audio_manager.py
 import threading
 import os
-import uuid
 from gtts import gTTS
 import pygame
+import traceback
 
 # 在 module 載入時初始化一次 mixer
 pygame.mixer.init()
@@ -12,11 +12,14 @@ def play_audio(file_path: str, volume: float):
     """非阻塞播放音檔，支援同時多重播放。"""
     def _play():
         try:
+            # print(file_path)
+            # print(volume)
             sound = pygame.mixer.Sound(file_path)
             sound.set_volume(volume)  # 0.0–1.0
             sound.play()              # 非阻塞
         except Exception as e:
             print(f"播放音檔時發生錯誤: {e}")
+            print(traceback.format_exc())
 
     threading.Thread(target=_play, daemon=True).start()
 
@@ -28,7 +31,7 @@ def speak_text(text: str, volume: float, lang: str = "zh-TW"):
             filename = f"./tts_{text}.mp3"
             # 產生檔案
             if not os.path.exists(filename):
-                tts = gTTS(text=text, lang=lang)
+                tts = gTTS(text=text, lang=lang, tld="com.au")
                 tts.save(filename)
             # 播放完後可選擇刪除檔案，或留給下一次重用
             play_audio(filename, volume)
@@ -38,6 +41,6 @@ def speak_text(text: str, volume: float, lang: str = "zh-TW"):
     threading.Thread(target=_speak, daemon=True).start()
 
 if __name__ == "__main__":
-    # 測試
-    speak_text("這是文字轉語音的測試", 0.8)
-    play_audio("./test.mp3", 0.5)
+    speak_text("三三三", 0.8)
+    import time
+    time.sleep(1)

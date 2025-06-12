@@ -88,7 +88,7 @@ class TimerApp:
         audio_path = item.get("audio_path", "")
         play_mode = item.get("play_mode", "文字")
         tts_text = item.get("tts_text", "")
-        volume = float(item.get("volume", 50)) / 100.0
+        volume = int(item.get("volume", 80)) / 100.0
         # 取得「目前剩餘時間 / 總時間」的 Label
         label_current_and_total = self.item_rows[item_id][1]
         total_str = self.format_time(countdown)
@@ -281,10 +281,11 @@ class TimerApp:
         new_item = {
             "text": "新的項目",
             "play_mode": "文字",
-            "tts_text": "",
+            "tts_text": "新的項目",
             "audio_path": "",
             "countdown": 30,
-            "infinite_loop": False
+            "infinite_loop": False,
+            "volume": "80"
         }
         self.items.append(new_item)
         self.refresh_listbox()
@@ -320,7 +321,7 @@ class TimerApp:
         item = self.items[index]
         item['text'] = self.entry_item_name.get()
         item['play_mode'] = self.play_mode_var.get()
-        item['volume'] = self.entry_volume.get().strip() or '70'
+        item['volume'] = self.entry_volume.get().strip() or '80'
         if item['play_mode'] == "文字":
             item['tts_text'] = self.entry_tts.get()
             item['audio_path'] = ""
