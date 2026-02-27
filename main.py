@@ -5,7 +5,7 @@ import sys
 from uuid import uuid4
 
 from PySide6.QtCore import Qt, Signal, QUrl
-from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices
+from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices, QCursor
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -122,12 +122,16 @@ class HotkeyRecorderLineEdit(QLineEdit):
 
 class TimerMainWindow(QMainWindow):
     REPO_URL = "https://github.com/T4ngL3m0n/maple_story_timer"
-    APP_VERSION = "v1.0.0"
+    APP_VERSION = "v1.0.1"
+    DEFAULT_WINDOW_WIDTH = 1280
+    DEFAULT_WINDOW_HEIGHT = 760
+    MIN_WINDOW_WIDTH = 900
+    MIN_WINDOW_HEIGHT = 620
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"Maple Story Timer {self.APP_VERSION} | by L3m0nT4ng")
-        self.resize(1600, 900)
+        self.resize(self.DEFAULT_WINDOW_WIDTH, self.DEFAULT_WINDOW_HEIGHT)
 
         self.config = load_config()
         self.items = sorted(self.config.get("items", []), key=lambda item: item.get("sort_order", 0))
@@ -153,6 +157,35 @@ class TimerMainWindow(QMainWindow):
         else:
             self._clear_editor()
             self._update_focus_panel(None)
+
+        self._apply_safe_initial_geometry()
+
+    def _apply_safe_initial_geometry(self) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        screen = QApplication.screenAt(QCursor.pos()) or app.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        max_width = max(available.width() - 40, 400)
+        max_height = max(available.height() - 40, 300)
+
+        target_width = min(self.DEFAULT_WINDOW_WIDTH, max_width)
+        target_height = min(self.DEFAULT_WINDOW_HEIGHT, max_height)
+
+        target_width = max(self.MIN_WINDOW_WIDTH, target_width)
+        target_height = max(self.MIN_WINDOW_HEIGHT, target_height)
+
+        target_width = min(target_width, available.width())
+        target_height = min(target_height, available.height())
+
+        x = available.x() + max(0, (available.width() - target_width) // 2)
+        y = available.y() + max(0, (available.height() - target_height) // 2)
+
+        self.setGeometry(x, y, target_width, target_height)
 
     def _build_ui(self) -> None:
         central = QWidget()
