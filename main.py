@@ -4,8 +4,8 @@ import copy
 import sys
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QCloseEvent
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -121,9 +121,12 @@ class HotkeyRecorderLineEdit(QLineEdit):
 
 
 class TimerMainWindow(QMainWindow):
+    REPO_URL = "https://github.com/T4ngL3m0n/maple_story_timer"
+    APP_VERSION = "v1.0.0"
+
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Maple Story Timer v1")
+        self.setWindowTitle(f"Maple Story Timer {self.APP_VERSION} | by L3m0nT4ng")
         self.resize(1600, 900)
 
         self.config = load_config()
@@ -259,6 +262,14 @@ class TimerMainWindow(QMainWindow):
         self.feedback_label.setObjectName("feedback")
         self.feedback_label.setWordWrap(True)
         middle_layout.addWidget(self.feedback_label)
+
+        self.source_label = QLabel(f'Source: <a href="{self.REPO_URL}">{self.REPO_URL}</a>')
+        self.source_label.setObjectName("sourceLink")
+        self.source_label.setTextFormat(Qt.RichText)
+        self.source_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.source_label.setOpenExternalLinks(False)
+        self.source_label.linkActivated.connect(self._open_repo_url)
+        middle_layout.addWidget(self.source_label)
 
         right_panel = QFrame(objectName="panel")
         right_layout = QVBoxLayout(right_panel)
@@ -407,6 +418,17 @@ class TimerMainWindow(QMainWindow):
             QLabel#hint {
                 font-size: 12px;
                 color: #7f96af;
+            }
+            QLabel#sourceLink {
+                font-size: 12px;
+                color: #7f96af;
+            }
+            QLabel#sourceLink a {
+                color: #8fd6ff;
+                text-decoration: none;
+            }
+            QLabel#sourceLink a:hover {
+                color: #c6ebff;
             }
             QTreeWidget {
                 background: #0d1723;
@@ -920,6 +942,9 @@ class TimerMainWindow(QMainWindow):
         color = "#ff7a88" if is_error else "#8fd6ff"
         self.feedback_label.setText(message)
         self.feedback_label.setStyleSheet(f"color: {color};")
+
+    def _open_repo_url(self, _url: str) -> None:
+        QDesktopServices.openUrl(QUrl(self.REPO_URL))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.timer_manager.stop_all()

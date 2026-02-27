@@ -2,6 +2,11 @@
 
 桌面倒數工具（PySide6），支援多項目並行倒數、TTS/音檔提醒、Windows 全域熱鍵。
 
+## Author & Source
+
+- Developer: L3m0nT4ng
+- GitHub: https://github.com/T4ngL3m0n/maple_story_timer
+
 ## Features
 
 - 單頁工作台 UI（左側清單 / 中間控制 / 右側即時編輯）
