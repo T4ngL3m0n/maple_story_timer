@@ -1,0 +1,1 @@
+﻿pyinstaller --clean --onefile --noconsole --name=MS_TimerApp --collect-all PySide6 --collect-all pygame --hidden-import=gtts main.py

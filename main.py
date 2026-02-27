@@ -1,387 +1,942 @@
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import os
-import shutil
+﻿from __future__ import annotations
+
+import copy
+import sys
+from uuid import uuid4
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QCloseEvent
+from PySide6.QtWidgets import (
+    QApplication,
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
 from data_manager import load_config, save_config
+from hotkey_manager import GlobalHotkeyService
+from hotkey_utils import canonicalize_hotkey
 from timer_manager import TimerManager
-import pygame
 
-class TimerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("倒數計時器 - build by DC: l3m0nt4ng v0.1")
-        self.items = load_config()
-        self.timer_manager = TimerManager()
-        self.current_selected_index = None
+STATE_LABELS = {
+    TimerManager.STATE_IDLE: "Idle",
+    TimerManager.STATE_RUNNING: "Running",
+    TimerManager.STATE_LOOPING: "Looping",
+    TimerManager.STATE_STOPPED: "Stopped",
+}
 
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+STATE_COLORS = {
+    TimerManager.STATE_IDLE: "#5f7388",
+    TimerManager.STATE_RUNNING: "#00c896",
+    TimerManager.STATE_LOOPING: "#4aa3ff",
+    TimerManager.STATE_STOPPED: "#ff5d73",
+}
 
-        # 建立兩個分頁：計時管理與設定
-        self.frame_timer = tk.Frame(self.notebook)
-        self.frame_settings = tk.Frame(self.notebook)
 
-        self.notebook.add(self.frame_timer, text="計時管理")
-        self.notebook.add(self.frame_settings, text="設定")
+def format_seconds(total_seconds: int) -> str:
+    safe_value = max(0, int(total_seconds))
+    minute = safe_value // 60
+    second = safe_value % 60
+    return f"{minute:02d}:{second:02d}"
 
-        self.setup_timer_tab()
-        self.setup_settings_tab()
-        pygame.mixer.init()
 
-    # ----------------- 計時管理分頁 -----------------
-    def setup_timer_tab(self):
-        self.items_frame = tk.Frame(self.frame_timer)
-        self.items_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-        self.item_rows = []
-        self.refresh_items_ui()
+class ReorderableTreeWidget(QTreeWidget):
+    order_changed = Signal(list)
 
-    def create_item_row(self, index, item):
-        frame = tk.Frame(self.items_frame, bd=1, relief=tk.GROOVE, pady=5)
-        frame.pack(fill=tk.X, padx=5, pady=2)
+    def dropEvent(self, event) -> None:
+        super().dropEvent(event)
+        ordered_ids = []
+        for index in range(self.topLevelItemCount()):
+            item = self.topLevelItem(index)
+            item_id = item.data(0, Qt.UserRole)
+            if item_id:
+                ordered_ids.append(item_id)
+        self.order_changed.emit(ordered_ids)
 
-        # 項目名稱
-        label_text = tk.Label(frame, text=item.get("text", f"Item{index+1}"), width=15)
-        label_text.pack(side=tk.LEFT, padx=5)
 
-        # 取得總倒數時間並格式化
-        total_seconds = item.get("countdown", 5)
-        total_str = self.format_time(total_seconds)
+class HotkeyRecorderLineEdit(QLineEdit):
+    hotkey_captured = Signal(str)
+    hotkey_cleared = Signal()
 
-        # 顯示「目前剩餘時間 / 總時間」，初始「目前剩餘時間」先顯示 00:00
-        label_current_and_total = tk.Label(frame, text=f"{total_str} / {total_str}", width=12)
-        label_current_and_total.pack(side=tk.LEFT, padx=5)
+    def __init__(self) -> None:
+        super().__init__()
+        self.setPlaceholderText("按下 Ctrl/Alt/Shift + 鍵")
 
-        # 開始、停止按鈕
-        btn_start = tk.Button(frame, text="開始", command=lambda: self.on_start(index))
-        btn_start.pack(side=tk.LEFT, padx=5)
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
 
-        btn_stop = tk.Button(frame, text="停止", command=lambda: self.on_stop(index))
-        btn_stop.pack(side=tk.LEFT, padx=5)
+        if key in (Qt.Key_Backspace, Qt.Key_Delete):
+            self.clear()
+            self.hotkey_cleared.emit()
+            event.accept()
+            return
 
-        # 模式 (文字 / 音檔)
-        play_mode = item.get('play_mode', '文字')
-        label_mode = tk.Label(frame, text=f"模式:{play_mode}")
-        label_mode.pack(side=tk.LEFT, padx=5)
+        key_text = self._key_to_text(key)
+        if not key_text:
+            event.ignore()
+            return
 
-        # 無限循環: 是/否
-        infinite_loop = item.get('infinite_loop', False)
-        loop_text = "循環" if infinite_loop else "單次"
-        label_loop = tk.Label(frame, text=loop_text)
-        label_loop.pack(side=tk.LEFT, padx=5)
+        modifiers = []
+        if event.modifiers() & Qt.ControlModifier:
+            modifiers.append("Ctrl")
+        if event.modifiers() & Qt.AltModifier:
+            modifiers.append("Alt")
+        if event.modifiers() & Qt.ShiftModifier:
+            modifiers.append("Shift")
 
-        # 回傳這個 row 的主要元件
-        # 注意：第二個元素要能在 on_start() 時拿來更新「目前剩餘時間」
-        return (frame, label_current_and_total)
+        if not modifiers:
+            event.ignore()
+            return
 
-    def refresh_items_ui(self):
-        for c in self.items_frame.winfo_children():
-            c.destroy()
-        self.item_rows.clear()
-        for idx, itm in enumerate(self.items):
-            row_ui = self.create_item_row(idx, itm)
-            self.item_rows.append(row_ui)
-
-    def on_start(self, item_id):
-        item = self.items[item_id]
-        countdown = item.get("countdown", 5)
-        infinite_loop = item.get("infinite_loop", False)
-        audio_path = item.get("audio_path", "")
-        play_mode = item.get("play_mode", "文字")
-        tts_text = item.get("tts_text", "")
-        volume = int(item.get("volume", 80)) / 100.0
-        # 取得「目前剩餘時間 / 總時間」的 Label
-        label_current_and_total = self.item_rows[item_id][1]
-        total_str = self.format_time(countdown)
-
-        def update_label(remaining_sec):
-            # 只更新剩餘時間那部分，後面維持 "/ 總時間"
-            remain_str = self.format_time(remaining_sec)
-            self.root.after(0, lambda: label_current_and_total.config(text=f"{remain_str} / {total_str}"))
-
-        self.timer_manager.start_item(
-            item_id=item_id,
-            countdown=countdown,
-            infinite_loop=infinite_loop,
-            audio_path=audio_path,
-            text_for_tts=tts_text,
-            play_mode=play_mode,
-            volume=volume,
-            on_update_label=update_label
-        )
-
-    def on_stop(self, item_id):
-        self.timer_manager.stop_item(item_id)
+        hotkey = "+".join(modifiers + [key_text])
+        self.setText(hotkey)
+        self.hotkey_captured.emit(hotkey)
+        event.accept()
 
     @staticmethod
-    def format_time(sec):
-        m = sec // 60
-        s = sec % 60
-        return f"{m:02d}:{s:02d}"
+    def _key_to_text(key: int) -> str | None:
+        if Qt.Key_F1 <= key <= Qt.Key_F12:
+            return f"F{key - Qt.Key_F1 + 1}"
+        if Qt.Key_0 <= key <= Qt.Key_9:
+            return str(key - Qt.Key_0)
+        if Qt.Key_A <= key <= Qt.Key_Z:
+            return chr(key)
+        return None
 
-    # ----------------- 設定分頁（整合 settings_window UI） -----------------
-    def setup_settings_tab(self):
-        # 左側：Listbox（項目列表）
-        self.settings_left_frame = tk.Frame(self.frame_settings)
-        self.settings_left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.listbox = tk.Listbox(self.settings_left_frame)
-        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.scrollbar = tk.Scrollbar(self.settings_left_frame, command=self.listbox.yview)
-        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox.config(yscrollcommand=self.scrollbar.set)
-        self.listbox.config(exportselection=False)
-        self.listbox.bind("<<ListboxSelect>>", self.on_listbox_select)
+class TimerMainWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Maple Story Timer v1")
+        self.resize(1600, 900)
 
-        # 右側：詳細設定區
-        self.settings_right_frame = tk.Frame(self.frame_settings)
-        self.settings_right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.config = load_config()
+        self.items = sorted(self.config.get("items", []), key=lambda item: item.get("sort_order", 0))
+        self._rebuild_item_lookup()
 
-        # 1) 項目名稱
-        tk.Label(self.settings_right_frame, text="項目名稱:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.entry_item_name = tk.Entry(self.settings_right_frame, width=30)
-        self.entry_item_name.grid(row=0, column=1, columnspan=2, sticky=tk.W)
-        bind_ctrl_a_to_entry(self.entry_item_name)
+        self.timer_manager = TimerManager(self)
+        self.timer_manager.timer_tick.connect(self._on_timer_tick)
+        self.timer_manager.timer_state_changed.connect(self._on_timer_state_changed)
 
-        # 2) 播放模式
-        tk.Label(self.settings_right_frame, text="播放模式:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.play_mode_var = tk.StringVar(value="文字")
-        self.combo_mode = ttk.Combobox(self.settings_right_frame, textvariable=self.play_mode_var,
-                                       values=["文字", "音檔"], state="readonly", width=10)
-        self.combo_mode.grid(row=1, column=1, sticky=tk.W)
-        self.combo_mode.bind("<<ComboboxSelected>>", self.update_mode_ui)
+        self.hotkey_service = GlobalHotkeyService(QApplication.instance())
+        self.hotkey_service.hotkey_triggered.connect(self._on_hotkey_triggered)
 
-        # 3) TTS 文字與 4) 音檔路徑（動態顯示）
-        self.label_tts = tk.Label(self.settings_right_frame, text="文字:")
-        self.entry_tts = tk.Entry(self.settings_right_frame, width=30)
+        self._loading_editor = False
 
-        self.label_audio = tk.Label(self.settings_right_frame, text="音檔路徑:")
-        self.entry_audio = tk.Entry(self.settings_right_frame, width=30)
-        self.btn_browse_audio = tk.Button(self.settings_right_frame, text="選擇檔案", command=self.browse_audio_file)
+        self._build_ui()
+        self._apply_styles()
+        self._refresh_tree()
+        self._register_global_hotkeys()
+        self._register_item_hotkeys()
 
-        # 初始預設顯示文字欄位
-        self.label_tts.grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.entry_tts.grid(row=2, column=1, columnspan=2, sticky=tk.W)
-
-        # 先在 self.settings_right_frame 裡創一個 frame_time
-        frame_time = tk.Frame(self.settings_right_frame)
-        frame_time.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=2)
-
-        # 在 frame_time 中擺放「倒數-分」、「分輸入框」、「秒:」、「秒輸入框」
-        tk.Label(frame_time, text="倒數    分:").pack(side=tk.LEFT)
-        self.entry_minute = tk.Entry(frame_time, width=5)
-        self.entry_minute.pack(side=tk.LEFT, padx=(0, 5))  # 稍微加點間距
-
-        tk.Label(frame_time, text="秒:").pack(side=tk.LEFT)
-        self.entry_second = tk.Entry(frame_time, width=5)
-        self.entry_second.pack(side=tk.LEFT)
-
-        tk.Label(frame_time, text="音量:").pack(side=tk.LEFT, padx=(10, 5))
-        self.entry_volume = tk.Entry(frame_time, width=5)
-        self.entry_volume.pack(side=tk.LEFT)
-
-        # 6) 無限循環
-        self.infinite_loop_var = tk.BooleanVar()
-        self.chk_infinite = tk.Checkbutton(self.settings_right_frame, text="無限循環", variable=self.infinite_loop_var)
-        self.chk_infinite.grid(row=4, column=1, sticky=tk.W, pady=2)
-
-        # 按鈕們
-        self.btn_new = tk.Button(self.settings_right_frame, text="新增項目", command=self.add_item)
-        self.btn_new.grid(row=5, column=0, pady=5)
-
-        self.btn_delete = tk.Button(self.settings_right_frame, text="刪除選取", command=self.delete_item)
-        self.btn_delete.grid(row=5, column=1, pady=5)
-
-        self.btn_save = tk.Button(self.settings_right_frame, text="儲存並更新", command=self.save_settings_from_detail)
-        self.btn_save.grid(row=6, column=1, pady=5)
-
-        self.refresh_listbox()
-
-    def refresh_listbox(self):
-        self.listbox.delete(0, tk.END)
-        for i, item in enumerate(self.items):
-            self.listbox.insert(tk.END, f"{i+1}. {item.get('text', '')}")
-
-    def on_listbox_select(self, event):
-        sel = self.listbox.curselection()
-        if sel:
-            self.btn_delete.config(state='normal')
-            index = sel[0]
-            self.current_selected_index = index
-            self.show_item_detail(index)
+        if self.items:
+            self._select_item(self.items[0]["id"])
         else:
-            self.btn_delete.config(state='disabled')
+            self._clear_editor()
+            self._update_focus_panel(None)
 
-    def show_item_detail(self, index):
-        if 0 <= index < len(self.items):
-            item = self.items[index]
-            self.entry_item_name.delete(0, tk.END)
-            self.entry_item_name.insert(0, item.get('text', ''))
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
 
-            play_mode = item.get('play_mode', '文字')
-            self.play_mode_var.set(play_mode)
-            self.update_mode_ui()
+        root_layout = QHBoxLayout(central)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(12)
 
-            self.entry_tts.delete(0, tk.END)
-            self.entry_tts.insert(0, item.get('tts_text', ''))
+        left_panel = QFrame(objectName="panel")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(8)
 
-            self.entry_audio.delete(0, tk.END)
-            self.entry_audio.insert(0, item.get('audio_path', ''))
+        left_title = QLabel("倒數項目")
+        left_title.setObjectName("panelTitle")
+        left_layout.addWidget(left_title)
 
-            countdown = item.get('countdown', 0)
-            minutes = countdown // 60
-            seconds = countdown % 60
-            self.entry_minute.delete(0, tk.END)
-            self.entry_minute.insert(0, str(minutes))
-            self.entry_second.delete(0, tk.END)
-            self.entry_second.insert(0, str(seconds))
+        self.tree = ReorderableTreeWidget()
+        self.tree.setColumnCount(5)
+        self.tree.setHeaderLabels(["名稱", "剩餘 / 總時", "狀態", "熱鍵", "操作"])
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
+        self.tree.setDefaultDropAction(Qt.MoveAction)
+        self.tree.setDragEnabled(True)
+        self.tree.setAcceptDrops(True)
+        self.tree.setDropIndicatorShown(True)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setRootIsDecorated(False)
+        self.tree.setUniformRowHeights(True)
 
-            self.infinite_loop_var.set(item.get('infinite_loop', False))
+        header = self.tree.header()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
 
-            self.entry_volume.delete(0, tk.END)
-            self.entry_volume.insert(0, item.get('volume', 0))
+        self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self.tree.order_changed.connect(self._on_order_changed)
+        left_layout.addWidget(self.tree)
 
-    def update_mode_ui(self, event=None):
-        current_mode = self.play_mode_var.get()
-        if current_mode == "文字":
-            # 顯示 TTS 欄位，隱藏音檔相關元件
-            self.label_tts.grid(row=2, column=0, sticky=tk.W, pady=2)
-            self.entry_tts.grid(row=2, column=1, columnspan=2, sticky=tk.W)
-            self.label_audio.grid_forget()
-            self.entry_audio.grid_forget()
-            self.btn_browse_audio.grid_forget()
-        else:
-            # 顯示音檔欄位，隱藏 TTS 欄位
-            self.label_audio.grid(row=2, column=0, sticky=tk.W, pady=2)
-            self.entry_audio.grid(row=2, column=1, sticky=tk.W)
-            self.btn_browse_audio.grid(row=2, column=2, sticky=tk.W)
-            self.label_tts.grid_forget()
-            self.entry_tts.grid_forget()
+        list_actions = QHBoxLayout()
+        self.btn_add = QPushButton("新增")
+        self.btn_duplicate = QPushButton("複製")
+        self.btn_delete = QPushButton("刪除")
 
-    def browse_audio_file(self):
-        file_path = filedialog.askopenfilename(filetypes=[("MP3 files", "*.mp3")])
-        if file_path:
-            self.entry_audio.delete(0, tk.END)
-            self.entry_audio.insert(0, file_path)
+        self.btn_add.clicked.connect(self._on_add_clicked)
+        self.btn_duplicate.clicked.connect(self._on_duplicate_clicked)
+        self.btn_delete.clicked.connect(self._on_delete_clicked)
 
-    def copy_file_to_local(self, src_path):
-        if not src_path or not os.path.exists(src_path):
-            return ""
-        file_name = os.path.basename(src_path)
-        dest_path = os.path.join(os.getcwd(), file_name)
-        if os.path.abspath(src_path) == os.path.abspath(dest_path):
-            return file_name
-        try:
-            shutil.copy2(src_path, dest_path)
-        except Exception as e:
-            messagebox.showerror("檔案複製失敗", str(e))
-            return ""
-        return file_name
+        list_actions.addWidget(self.btn_add)
+        list_actions.addWidget(self.btn_duplicate)
+        list_actions.addWidget(self.btn_delete)
+        left_layout.addLayout(list_actions)
 
-    def add_item(self):
+        middle_panel = QFrame(objectName="panel")
+        middle_layout = QVBoxLayout(middle_panel)
+        middle_layout.setContentsMargins(12, 12, 12, 12)
+        middle_layout.setSpacing(10)
+
+        middle_title = QLabel("即時控制")
+        middle_title.setObjectName("panelTitle")
+        middle_layout.addWidget(middle_title)
+
+        self.focus_name_label = QLabel("未選取項目")
+        self.focus_name_label.setObjectName("focusName")
+        middle_layout.addWidget(self.focus_name_label)
+
+        self.focus_timer_label = QLabel("00:00 / 00:00")
+        self.focus_timer_label.setObjectName("focusTimer")
+        middle_layout.addWidget(self.focus_timer_label)
+
+        self.focus_state_chip = QLabel("Idle")
+        self.focus_state_chip.setObjectName("stateChip")
+        self.focus_state_chip.setAlignment(Qt.AlignCenter)
+        middle_layout.addWidget(self.focus_state_chip)
+
+        selected_actions = QHBoxLayout()
+        self.btn_start_selected = QPushButton("開始選取")
+        self.btn_stop_selected = QPushButton("停止選取")
+        self.btn_stop_all = QPushButton("全部停止")
+
+        self.btn_start_selected.clicked.connect(self._start_selected_item)
+        self.btn_stop_selected.clicked.connect(self._stop_selected_item)
+        self.btn_stop_all.clicked.connect(self._stop_all_items)
+
+        selected_actions.addWidget(self.btn_start_selected)
+        selected_actions.addWidget(self.btn_stop_selected)
+        selected_actions.addWidget(self.btn_stop_all)
+        middle_layout.addLayout(selected_actions)
+
+        global_hint_title = QLabel("全域熱鍵")
+        global_hint_title.setObjectName("subTitle")
+        middle_layout.addWidget(global_hint_title)
+
+        self.lbl_global_stop = QLabel("Ctrl+Shift+S：全部停止")
+        self.lbl_global_show = QLabel("Ctrl+Shift+M：顯示主視窗")
+        middle_layout.addWidget(self.lbl_global_stop)
+        middle_layout.addWidget(self.lbl_global_show)
+
+        middle_layout.addStretch(1)
+
+        self.feedback_label = QLabel("")
+        self.feedback_label.setObjectName("feedback")
+        self.feedback_label.setWordWrap(True)
+        middle_layout.addWidget(self.feedback_label)
+
+        right_panel = QFrame(objectName="panel")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(8)
+
+        right_title = QLabel("項目設定（即時儲存）")
+        right_title.setObjectName("panelTitle")
+        right_layout.addWidget(right_title)
+
+        form_layout = QFormLayout()
+        form_layout.setSpacing(10)
+
+        self.edit_name = QLineEdit()
+        self.edit_name.setPlaceholderText("輸入項目名稱")
+        self.edit_name.textEdited.connect(self._on_editor_changed)
+        form_layout.addRow("名稱", self.edit_name)
+
+        self.combo_mode = QComboBox()
+        self.combo_mode.addItems(["文字", "音檔"])
+        self.combo_mode.currentTextChanged.connect(self._on_mode_changed)
+        form_layout.addRow("播放模式", self.combo_mode)
+
+        self.edit_tts = QLineEdit()
+        self.edit_tts.setPlaceholderText("倒數結束時播放的文字")
+        self.edit_tts.textEdited.connect(self._on_editor_changed)
+        self.tts_container = QWidget()
+        tts_layout = QHBoxLayout(self.tts_container)
+        tts_layout.setContentsMargins(0, 0, 0, 0)
+        tts_layout.addWidget(self.edit_tts)
+        form_layout.addRow("文字內容", self.tts_container)
+
+        self.edit_audio_path = QLineEdit()
+        self.edit_audio_path.setPlaceholderText("音檔路徑")
+        self.edit_audio_path.textEdited.connect(self._on_editor_changed)
+        self.btn_browse_audio = QPushButton("瀏覽")
+        self.btn_browse_audio.clicked.connect(self._browse_audio)
+
+        self.audio_container = QWidget()
+        audio_layout = QHBoxLayout(self.audio_container)
+        audio_layout.setContentsMargins(0, 0, 0, 0)
+        audio_layout.addWidget(self.edit_audio_path)
+        audio_layout.addWidget(self.btn_browse_audio)
+        form_layout.addRow("音檔路徑", self.audio_container)
+
+        countdown_container = QWidget()
+        countdown_layout = QHBoxLayout(countdown_container)
+        countdown_layout.setContentsMargins(0, 0, 0, 0)
+        countdown_layout.setSpacing(6)
+
+        self.spin_min = QSpinBox()
+        self.spin_min.setRange(0, 999)
+        self.spin_min.valueChanged.connect(self._on_editor_changed)
+
+        self.spin_sec = QSpinBox()
+        self.spin_sec.setRange(0, 59)
+        self.spin_sec.valueChanged.connect(self._on_editor_changed)
+
+        countdown_layout.addWidget(QLabel("分"))
+        countdown_layout.addWidget(self.spin_min)
+        countdown_layout.addSpacing(8)
+        countdown_layout.addWidget(QLabel("秒"))
+        countdown_layout.addWidget(self.spin_sec)
+        countdown_layout.addStretch(1)
+        form_layout.addRow("倒數時間", countdown_container)
+
+        volume_container = QWidget()
+        volume_layout = QHBoxLayout(volume_container)
+        volume_layout.setContentsMargins(0, 0, 0, 0)
+        volume_layout.setSpacing(8)
+
+        self.slider_volume = QSlider(Qt.Horizontal)
+        self.slider_volume.setRange(0, 100)
+        self.slider_volume.valueChanged.connect(self._on_volume_changed)
+        self.lbl_volume_value = QLabel("80")
+
+        volume_layout.addWidget(self.slider_volume)
+        volume_layout.addWidget(self.lbl_volume_value)
+        form_layout.addRow("音量", volume_container)
+
+        self.chk_infinite = QCheckBox("無限循環")
+        self.chk_infinite.toggled.connect(self._on_editor_changed)
+        form_layout.addRow("循環", self.chk_infinite)
+
+        self.edit_hotkey = HotkeyRecorderLineEdit()
+        self.edit_hotkey.hotkey_captured.connect(self._on_hotkey_captured)
+        self.edit_hotkey.hotkey_cleared.connect(self._on_hotkey_cleared)
+        form_layout.addRow("項目熱鍵", self.edit_hotkey)
+
+        self.lbl_hotkey_help = QLabel("僅支援 Ctrl/Alt/Shift + F1~F12 / A~Z / 0~9")
+        self.lbl_hotkey_help.setObjectName("hint")
+        form_layout.addRow("", self.lbl_hotkey_help)
+
+        right_layout.addLayout(form_layout)
+        right_layout.addStretch(1)
+
+        root_layout.addWidget(left_panel, 6)
+        root_layout.addWidget(middle_panel, 4)
+        root_layout.addWidget(right_panel, 5)
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background-color: #0b131d;
+                color: #d8e6ff;
+            }
+            QFrame#panel {
+                background: #111d2a;
+                border: 1px solid #223448;
+                border-radius: 12px;
+            }
+            QLabel#panelTitle {
+                font-size: 18px;
+                font-weight: 700;
+                color: #f0f6ff;
+            }
+            QLabel#subTitle {
+                font-size: 14px;
+                font-weight: 600;
+                color: #9fc7ff;
+            }
+            QLabel#focusName {
+                font-size: 22px;
+                font-weight: 700;
+                color: #ffffff;
+            }
+            QLabel#focusTimer {
+                font-size: 40px;
+                font-weight: 700;
+                color: #6fe9ff;
+            }
+            QLabel#stateChip {
+                font-size: 14px;
+                font-weight: 700;
+                border-radius: 10px;
+                padding: 8px;
+                color: #ffffff;
+                background: #5f7388;
+            }
+            QLabel#feedback {
+                font-size: 13px;
+                color: #9fc7ff;
+                min-height: 38px;
+            }
+            QLabel#hint {
+                font-size: 12px;
+                color: #7f96af;
+            }
+            QTreeWidget {
+                background: #0d1723;
+                border: 1px solid #1f3043;
+                border-radius: 8px;
+                alternate-background-color: #122031;
+            }
+            QHeaderView::section {
+                background: #1a2a3d;
+                color: #d4e8ff;
+                font-weight: 600;
+                padding: 6px;
+                border: none;
+                border-right: 1px solid #223448;
+            }
+            QLineEdit, QSpinBox, QComboBox {
+                background: #0d1723;
+                border: 1px solid #2a3e56;
+                border-radius: 6px;
+                min-height: 30px;
+                padding: 3px 8px;
+                color: #e5f0ff;
+            }
+            QSlider::groove:horizontal {
+                border: none;
+                height: 6px;
+                background: #223448;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #49a5ff;
+                border: none;
+                width: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+            }
+            QPushButton {
+                background: #1f8e73;
+                border: none;
+                border-radius: 6px;
+                min-height: 30px;
+                padding: 0 12px;
+                font-weight: 600;
+                color: #ffffff;
+            }
+            QPushButton:hover {
+                background: #24a586;
+            }
+            QPushButton:pressed {
+                background: #1a7a62;
+            }
+            QCheckBox {
+                color: #d8e6ff;
+            }
+            """
+        )
+    def _rebuild_item_lookup(self) -> None:
+        self.item_lookup = {item["id"]: item for item in self.items}
+
+    def _refresh_tree(self, selected_item_id: str | None = None) -> None:
+        if selected_item_id is None:
+            selected_item_id = self._current_item_id()
+
+        self.tree.blockSignals(True)
+        self.tree.clear()
+
+        for item in self.items:
+            tree_item = QTreeWidgetItem()
+            tree_item.setFlags(
+                tree_item.flags()
+                | Qt.ItemIsSelectable
+                | Qt.ItemIsEnabled
+                | Qt.ItemIsDragEnabled
+                | Qt.ItemIsDropEnabled
+            )
+            tree_item.setData(0, Qt.UserRole, item["id"])
+            self.tree.addTopLevelItem(tree_item)
+            self._attach_row_action_buttons(tree_item, item["id"])
+            self._update_row_visuals(item["id"], tree_item)
+
+        self.tree.blockSignals(False)
+
+        if not self.items:
+            self._clear_editor()
+            self._update_focus_panel(None)
+            return
+
+        target_id = selected_item_id if selected_item_id in self.item_lookup else self.items[0]["id"]
+        self._select_item(target_id)
+
+    def _attach_row_action_buttons(self, tree_item: QTreeWidgetItem, item_id: str) -> None:
+        action_widget = QWidget()
+        action_layout = QHBoxLayout(action_widget)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(4)
+
+        btn_start = QPushButton("開始")
+        btn_start.setFixedWidth(54)
+        btn_stop = QPushButton("停止")
+        btn_stop.setFixedWidth(54)
+
+        btn_start.clicked.connect(lambda _checked=False, value=item_id: self._start_item(value))
+        btn_stop.clicked.connect(lambda _checked=False, value=item_id: self._stop_item(value))
+
+        action_layout.addWidget(btn_start)
+        action_layout.addWidget(btn_stop)
+        self.tree.setItemWidget(tree_item, 4, action_widget)
+
+    def _update_row_visuals(self, item_id: str, tree_item: QTreeWidgetItem | None = None) -> None:
+        item = self.item_lookup.get(item_id)
+        if item is None:
+            return
+
+        if tree_item is None:
+            tree_item = self._find_tree_item(item_id)
+            if tree_item is None:
+                return
+
+        total = int(item.get("countdown_sec", 30))
+        state = self.timer_manager.get_state(item_id)
+        remaining = self.timer_manager.get_remaining(item_id, total)
+
+        tree_item.setText(0, item.get("name", ""))
+        tree_item.setText(1, f"{format_seconds(remaining)} / {format_seconds(total)}")
+        tree_item.setText(2, STATE_LABELS.get(state, "Idle"))
+        tree_item.setText(3, item.get("hotkey") or "-")
+        tree_item.setForeground(2, QColor(STATE_COLORS.get(state, "#5f7388")))
+
+    def _find_tree_item(self, item_id: str) -> QTreeWidgetItem | None:
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            if item.data(0, Qt.UserRole) == item_id:
+                return item
+        return None
+
+    def _select_item(self, item_id: str) -> None:
+        target = self._find_tree_item(item_id)
+        if target:
+            self.tree.setCurrentItem(target)
+
+    def _current_item_id(self) -> str | None:
+        selected = self.tree.selectedItems()
+        if not selected:
+            return None
+        return selected[0].data(0, Qt.UserRole)
+
+    def _current_item(self) -> dict | None:
+        item_id = self._current_item_id()
+        if not item_id:
+            return None
+        return self.item_lookup.get(item_id)
+
+    def _on_selection_changed(self) -> None:
+        item = self._current_item()
+        if item is None:
+            self._clear_editor()
+            self._update_focus_panel(None)
+            return
+
+        self._load_item_into_editor(item)
+        self._update_focus_panel(item["id"])
+
+    def _load_item_into_editor(self, item: dict) -> None:
+        self._loading_editor = True
+
+        self.edit_name.setText(str(item.get("name", "")))
+        self.combo_mode.setCurrentText(item.get("play_mode", "文字"))
+        self.edit_tts.setText(str(item.get("tts_text", "")))
+        self.edit_audio_path.setText(str(item.get("audio_path", "")))
+
+        countdown_sec = int(item.get("countdown_sec", 30))
+        self.spin_min.setValue(countdown_sec // 60)
+        self.spin_sec.setValue(countdown_sec % 60)
+
+        volume = int(item.get("volume", 80))
+        self.slider_volume.setValue(volume)
+        self.lbl_volume_value.setText(str(volume))
+
+        self.chk_infinite.setChecked(bool(item.get("infinite_loop", False)))
+        self.edit_hotkey.setText(item.get("hotkey") or "")
+
+        self._set_mode_visibility(self.combo_mode.currentText())
+        self._loading_editor = False
+
+    def _clear_editor(self) -> None:
+        self._loading_editor = True
+        self.edit_name.clear()
+        self.combo_mode.setCurrentText("文字")
+        self.edit_tts.clear()
+        self.edit_audio_path.clear()
+        self.spin_min.setValue(0)
+        self.spin_sec.setValue(30)
+        self.slider_volume.setValue(80)
+        self.lbl_volume_value.setText("80")
+        self.chk_infinite.setChecked(False)
+        self.edit_hotkey.clear()
+        self._set_mode_visibility("文字")
+        self._loading_editor = False
+
+    def _set_mode_visibility(self, mode: str) -> None:
+        is_text_mode = mode == "文字"
+        self.tts_container.setVisible(is_text_mode)
+        self.audio_container.setVisible(not is_text_mode)
+
+    def _on_mode_changed(self, _value: str) -> None:
+        self._set_mode_visibility(self.combo_mode.currentText())
+        self._on_editor_changed()
+
+    def _on_volume_changed(self, value: int) -> None:
+        self.lbl_volume_value.setText(str(value))
+        self._on_editor_changed()
+
+    def _on_editor_changed(self, *_args) -> None:
+        if self._loading_editor:
+            return
+
+        item = self._current_item()
+        if item is None:
+            return
+
+        if self.spin_min.value() == 0 and self.spin_sec.value() == 0:
+            self._loading_editor = True
+            self.spin_sec.setValue(1)
+            self._loading_editor = False
+
+        item["name"] = self.edit_name.text().strip() or "未命名項目"
+        item["play_mode"] = self.combo_mode.currentText()
+        item["tts_text"] = self.edit_tts.text().strip()
+        item["audio_path"] = self.edit_audio_path.text().strip()
+        item["countdown_sec"] = self.spin_min.value() * 60 + self.spin_sec.value()
+        item["volume"] = self.slider_volume.value()
+        item["infinite_loop"] = self.chk_infinite.isChecked()
+
+        self._persist_config()
+        self._update_row_visuals(item["id"])
+        self._update_focus_panel(item["id"])
+
+    def _browse_audio(self) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "選擇音檔",
+            "",
+            "Audio Files (*.mp3 *.wav *.ogg);;All Files (*)",
+        )
+        if not file_path:
+            return
+
+        self.edit_audio_path.setText(file_path)
+        self._on_editor_changed()
+
+    def _on_hotkey_captured(self, hotkey_str: str) -> None:
+        if self._loading_editor:
+            return
+
+        item = self._current_item()
+        if item is None:
+            return
+
+        canonical = canonicalize_hotkey(hotkey_str)
+        if canonical is None:
+            self._restore_hotkey_editor(item)
+            self._set_feedback("熱鍵格式無效，請使用 Ctrl/Alt/Shift + 單鍵", is_error=True)
+            return
+
+        if self._hotkey_conflict_exists(canonical, item["id"]):
+            self._restore_hotkey_editor(item)
+            self._set_feedback(f"熱鍵衝突：{canonical} 已被其他項目使用", is_error=True)
+            return
+
+        result = self.hotkey_service.register_item_hotkey(item["id"], canonical)
+        if not result.ok:
+            self._restore_hotkey_editor(item)
+            self._set_feedback(f"熱鍵註冊失敗：{result.message}", is_error=True)
+            return
+
+        item["hotkey"] = canonical
+        self._persist_config()
+        self._update_row_visuals(item["id"])
+        self._set_feedback(f"已綁定熱鍵 {canonical}", is_error=False)
+
+    def _on_hotkey_cleared(self) -> None:
+        if self._loading_editor:
+            return
+
+        item = self._current_item()
+        if item is None:
+            return
+
+        self.hotkey_service.unregister_item_hotkey(item["id"])
+        item["hotkey"] = None
+        self._persist_config()
+        self._update_row_visuals(item["id"])
+        self._set_feedback("已清除項目熱鍵", is_error=False)
+
+    def _restore_hotkey_editor(self, item: dict) -> None:
+        self._loading_editor = True
+        self.edit_hotkey.setText(item.get("hotkey") or "")
+        self._loading_editor = False
+
+    def _hotkey_conflict_exists(self, hotkey: str, current_item_id: str) -> bool:
+        for item in self.items:
+            if item["id"] == current_item_id:
+                continue
+            if item.get("hotkey") == hotkey:
+                return True
+        return False
+    def _on_add_clicked(self) -> None:
         new_item = {
-            "text": "新的項目",
+            "id": str(uuid4()),
+            "name": "新的項目",
             "play_mode": "文字",
             "tts_text": "新的項目",
             "audio_path": "",
-            "countdown": 30,
+            "countdown_sec": 30,
             "infinite_loop": False,
-            "volume": "80"
+            "volume": 80,
+            "hotkey": None,
+            "sort_order": len(self.items),
         }
         self.items.append(new_item)
-        self.refresh_listbox()
-        self.listbox.select_clear(0, tk.END)
-        self.listbox.select_set(tk.END)
-        self.show_item_detail(len(self.items) - 1)
+        self._rebuild_item_lookup()
+        self._persist_config()
+        self._refresh_tree(selected_item_id=new_item["id"])
+        self._set_feedback("已新增項目", is_error=False)
 
-    def delete_item(self):
-        sel = self.listbox.curselection()
-        if not sel:
-            return
-        index = sel[0]
-        if 0 <= index < len(self.items):
-            self.items.pop(index)
-            self.refresh_listbox()
-            self.clear_detail()
-            messagebox.showinfo("刪除", f"已刪除第 {index+1} 個項目")
-
-    def update_item(self):
-        sel = self.listbox.curselection()
-        if not sel:
-            if self.current_selected_index is not None:
-                index = self.current_selected_index
-            else:
-                messagebox.showwarning("警告", "請先選取要更新的項目")
-                return
-        else:
-            index = sel[0]
-        if not (0 <= index < len(self.items)):
-            messagebox.showwarning("警告", "請先選取要更新的項目")
+    def _on_duplicate_clicked(self) -> None:
+        item = self._current_item()
+        if item is None:
             return
 
-        item = self.items[index]
-        item['text'] = self.entry_item_name.get()
-        item['play_mode'] = self.play_mode_var.get()
-        item['volume'] = self.entry_volume.get().strip() or '80'
-        if item['play_mode'] == "文字":
-            item['tts_text'] = self.entry_tts.get()
-            item['audio_path'] = ""
-        else:
-            item['tts_text'] = ""
-            user_path = self.entry_audio.get().strip()
-            if user_path:
-                copied_file_name = self.copy_file_to_local(user_path)
-                if copied_file_name:
-                    item['audio_path'] = os.path.join(os.getcwd(), copied_file_name)
+        index = self.items.index(item)
+        cloned = copy.deepcopy(item)
+        cloned["id"] = str(uuid4())
+        cloned["name"] = f"{item.get('name', '項目')} (副本)"
+        cloned["hotkey"] = None
+
+        self.items.insert(index + 1, cloned)
+        self._rebuild_item_lookup()
+        self._persist_config()
+        self._refresh_tree(selected_item_id=cloned["id"])
+        self._set_feedback("已複製項目（熱鍵已清空）", is_error=False)
+
+    def _on_delete_clicked(self) -> None:
+        item = self._current_item()
+        if item is None:
+            return
+
+        item_id = item["id"]
+        self.hotkey_service.unregister_item_hotkey(item_id)
+        self.timer_manager.remove_item(item_id)
+
+        self.items = [current for current in self.items if current["id"] != item_id]
+        self._rebuild_item_lookup()
+        self._persist_config()
+        self._refresh_tree()
+        self._set_feedback("已刪除項目", is_error=False)
+
+    def _on_order_changed(self, ordered_ids: list) -> None:
+        if len(ordered_ids) != len(self.items):
+            return
+
+        lookup = {item["id"]: item for item in self.items}
+        if any(item_id not in lookup for item_id in ordered_ids):
+            return
+
+        selected_item_id = self._current_item_id()
+        self.items = [lookup[item_id] for item_id in ordered_ids]
+        self._rebuild_item_lookup()
+        self._persist_config()
+        self._refresh_tree(selected_item_id=selected_item_id)
+        self._set_feedback("排序已儲存", is_error=False)
+
+    def _start_selected_item(self) -> None:
+        item = self._current_item()
+        if item:
+            self._start_item(item["id"])
+
+    def _stop_selected_item(self) -> None:
+        item = self._current_item()
+        if item:
+            self._stop_item(item["id"])
+
+    def _start_item(self, item_id: str) -> None:
+        item = self.item_lookup.get(item_id)
+        if item is None:
+            return
+
+        self.timer_manager.start_item(item)
+        self._update_row_visuals(item_id)
+        self._update_focus_panel(item_id)
+
+    def _stop_item(self, item_id: str) -> None:
+        self.timer_manager.stop_item(item_id)
+        self._update_row_visuals(item_id)
+        self._update_focus_panel(item_id)
+
+    def _toggle_item(self, item_id: str) -> None:
+        if self.timer_manager.is_running(item_id):
+            self._stop_item(item_id)
+            return
+        self._start_item(item_id)
+
+    def _stop_all_items(self) -> None:
+        self.timer_manager.stop_all()
+        for item in self.items:
+            self._update_row_visuals(item["id"])
+        self._update_focus_panel(self._current_item_id())
+
+    def _persist_config(self) -> None:
+        for index, item in enumerate(self.items):
+            item["sort_order"] = index
+        self.config["items"] = self.items
+        save_config(self.config)
+
+    def _register_global_hotkeys(self) -> None:
+        global_hotkeys = self.config.get("global_hotkeys", {})
+        stop_hotkey = global_hotkeys.get("stop_all", "Ctrl+Shift+S")
+        show_hotkey = global_hotkeys.get("show_window", "Ctrl+Shift+M")
+
+        result = self.hotkey_service.register_global_hotkeys(stop_hotkey, show_hotkey)
+        if not result.ok:
+            self._set_feedback(f"全域熱鍵註冊失敗：{result.message}", is_error=True)
+
+        self.config["global_hotkeys"] = {
+            "stop_all": stop_hotkey,
+            "show_window": show_hotkey,
+        }
+
+        self.lbl_global_stop.setText(f"{stop_hotkey}：全部停止")
+        self.lbl_global_show.setText(f"{show_hotkey}：顯示主視窗")
+
+    def _register_item_hotkeys(self) -> None:
+        failed_items = []
+
+        for item in self.items:
+            hotkey = item.get("hotkey")
+            if not hotkey:
+                continue
+
+            result = self.hotkey_service.register_item_hotkey(item["id"], hotkey)
+            if result.ok:
+                item["hotkey"] = result.canonical_hotkey
             else:
-                item['audio_path'] = ""
+                failed_items.append((item.get("name", "未命名項目"), hotkey, result.message))
+                item["hotkey"] = None
 
-        try:
-            m = int(self.entry_minute.get())
-        except:
-            m = 0
-        try:
-            s = int(self.entry_second.get())
-        except:
-            s = 0
-        total_sec = max(0, m * 60 + s)
-        item['countdown'] = total_sec
-        item['infinite_loop'] = self.infinite_loop_var.get()
+        if failed_items:
+            self._persist_config()
+            details = "\n".join([f"{name} ({hotkey}) -> {reason}" for name, hotkey, reason in failed_items])
+            QMessageBox.warning(self, "熱鍵載入失敗", f"以下項目熱鍵已清空：\n{details}")
 
-        self.refresh_listbox()
-        self.listbox.select_clear(0, tk.END)
-        self.listbox.select_set(index)
-        self.show_item_detail(index)
-        save_config(self.items)
-        # messagebox.showinfo("更新", f"第 {index+1} 個項目已更新並保存")
+    def _on_hotkey_triggered(self, token: str) -> None:
+        if token == GlobalHotkeyService.GLOBAL_STOP_TOKEN:
+            self._stop_all_items()
+            self._set_feedback("已透過全域熱鍵停止全部項目", is_error=False)
+            return
 
-    def clear_detail(self):
-        self.entry_item_name.delete(0, tk.END)
-        self.entry_tts.delete(0, tk.END)
-        self.entry_audio.delete(0, tk.END)
-        self.entry_minute.delete(0, tk.END)
-        self.entry_second.delete(0, tk.END)
-        self.entry_volume.delete(0, tk.END)
-        self.infinite_loop_var.set(False)
-        self.play_mode_var.set("文字")
-        self.update_mode_ui()
+        if token == GlobalHotkeyService.GLOBAL_SHOW_WINDOW_TOKEN:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+            self._set_feedback("已透過全域熱鍵顯示主視窗", is_error=False)
+            return
 
-    def save_settings_from_detail(self):
-        self.update_item()
-        save_config(self.items)
-        self.refresh_items_ui()
-        # messagebox.showinfo("成功", "設定已更新")
+        if token.startswith("item:"):
+            item_id = token.split(":", 1)[1]
+            if item_id in self.item_lookup:
+                self._toggle_item(item_id)
 
-def bind_ctrl_a_to_entry(entry_widget):
-    def select_all(event):
-        # 讓此 Entry 全選
-        entry_widget.select_range(0, tk.END)
-        # 游標移到最後
-        entry_widget.icursor(tk.END)
-        # return 'break' 可以阻止事件繼續傳遞
-        return 'break'
-    # 綁定 Ctrl+a
-    entry_widget.bind('<Control-a>', select_all)
+    def _on_timer_tick(self, item_id: str, _remaining: int, _total: int) -> None:
+        self._update_row_visuals(item_id)
+        if self._current_item_id() == item_id:
+            self._update_focus_panel(item_id)
+
+    def _on_timer_state_changed(self, item_id: str, _state: str) -> None:
+        self._update_row_visuals(item_id)
+        if self._current_item_id() == item_id:
+            self._update_focus_panel(item_id)
+
+    def _update_focus_panel(self, item_id: str | None) -> None:
+        if item_id is None:
+            self.focus_name_label.setText("未選取項目")
+            self.focus_timer_label.setText("00:00 / 00:00")
+            self._set_state_chip(TimerManager.STATE_IDLE)
+            return
+
+        item = self.item_lookup.get(item_id)
+        if item is None:
+            self.focus_name_label.setText("未選取項目")
+            self.focus_timer_label.setText("00:00 / 00:00")
+            self._set_state_chip(TimerManager.STATE_IDLE)
+            return
+
+        total = int(item.get("countdown_sec", 30))
+        remaining = self.timer_manager.get_remaining(item_id, total)
+        state = self.timer_manager.get_state(item_id)
+
+        self.focus_name_label.setText(item.get("name", "未命名項目"))
+        self.focus_timer_label.setText(f"{format_seconds(remaining)} / {format_seconds(total)}")
+        self._set_state_chip(state)
+
+    def _set_state_chip(self, state: str) -> None:
+        label = STATE_LABELS.get(state, "Idle")
+        color = STATE_COLORS.get(state, "#5f7388")
+        self.focus_state_chip.setText(label)
+        self.focus_state_chip.setStyleSheet(
+            f"background: {color}; color: #ffffff; border-radius: 10px; padding: 8px; font-weight: 700;"
+        )
+
+    def _set_feedback(self, message: str, is_error: bool) -> None:
+        color = "#ff7a88" if is_error else "#8fd6ff"
+        self.feedback_label.setText(message)
+        self.feedback_label.setStyleSheet(f"color: {color};")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.timer_manager.stop_all()
+        self.hotkey_service.unregister_all()
+        self._persist_config()
+        event.accept()
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+
+    window = TimerMainWindow()
+    window.show()
+
+    return app.exec()
+
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = TimerApp(root)
-    root.mainloop()
+    raise SystemExit(main())

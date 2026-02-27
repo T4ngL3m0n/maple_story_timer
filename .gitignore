@@ -1,5 +1,6 @@
 __pycache__/
 build/
 dist/
-MS_TimerApp.spec
-pyinstaller.txt
+.pytest_cache/
+.tts_cache/
+config.backup.*.json
